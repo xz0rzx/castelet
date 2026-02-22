@@ -1,13 +1,116 @@
-import { readFileSync, writeFileSync, mkdirSync } from "fs";
+import { readFileSync } from "fs";
 import { resolve, basename } from "path";
 import OpenAI from "openai";
 import { config } from "./config.js";
-import type { ParsedChat, ParsedChannelComments, GeneratedOutput } from "./types.js";
+import type {
+  ParsedChat,
+  ParsedChannelComments,
+  ParsedMessage,
+  GeneratedOutput,
+  MessageEntity,
+} from "./types.js";
+import { hasFlag, getStringFlag, getPositionalArg } from "./utils/cli.js";
+import { ensureDataDir, saveJson, buildTimestampedFilename } from "./utils/fs.js";
+
+function applyEntities(text: string, entities: MessageEntity[]): string {
+  if (entities.length === 0) return text;
+
+  // Process entities from end to start so offsets stay valid
+  const sorted = [...entities].sort((a, b) => b.offset - a.offset);
+  const chars = [...text]; // handle multi-byte correctly via spread
+
+  for (const e of sorted) {
+    const slice = chars.slice(e.offset, e.offset + e.length).join("");
+    let replacement: string;
+
+    switch (e.type) {
+      case "bold":
+        replacement = `**${slice}**`;
+        break;
+      case "italic":
+        replacement = `_${slice}_`;
+        break;
+      case "underline":
+        replacement = `__${slice}__`;
+        break;
+      case "strikethrough":
+        replacement = `~~${slice}~~`;
+        break;
+      case "code":
+        replacement = `\`${slice}\``;
+        break;
+      case "pre":
+        replacement = e.language ? `\`\`\`${e.language}\n${slice}\n\`\`\`` : `\`\`\`\n${slice}\n\`\`\``;
+        break;
+      case "text_link":
+        replacement = e.url ? `[${slice}](${e.url})` : slice;
+        break;
+      case "spoiler":
+        replacement = `||${slice}||`;
+        break;
+      case "blockquote":
+        replacement = slice.split("\n").map((l) => `> ${l}`).join("\n");
+        break;
+      default:
+        replacement = slice;
+    }
+
+    chars.splice(e.offset, e.length, replacement);
+  }
+
+  return chars.join("");
+}
+
+function formatMessage(m: ParsedMessage): string {
+  let text = applyEntities(m.text, m.entities);
+
+  if (m.media) {
+    const mediaLabel = m.media.fileName
+      ? `[${m.media.type}: ${m.media.fileName}]`
+      : `[${m.media.type}]`;
+    text = text ? `${mediaLabel} ${text}` : mediaLabel;
+  }
+
+  if (m.forward) {
+    const fwdLabel = m.forward.fromName
+      ? `[forwarded from: ${m.forward.fromName}]`
+      : m.forward.fromId
+        ? `[forwarded from: ${m.forward.fromId}]`
+        : "[forwarded]";
+    text = `${fwdLabel} ${text}`;
+  }
+
+  return `[${m.senderName}] (${m.date}): ${text}`;
+}
+
+function formatMessagesContext(data: ParsedChat | ParsedChannelComments): string {
+  if (data.type === "channel_comments") {
+    const channelData = data as ParsedChannelComments;
+    return channelData.posts
+      .map((post) => {
+        let postText = post.postEntities
+          ? applyEntities(post.postText, post.postEntities)
+          : post.postText;
+        if (post.postMedia) {
+          const label = post.postMedia.fileName
+            ? `[${post.postMedia.type}: ${post.postMedia.fileName}]`
+            : `[${post.postMedia.type}]`;
+          postText = postText ? `${label} ${postText}` : label;
+        }
+        const commentsText = post.comments
+          .map((c) => `  ${formatMessage(c)}`)
+          .join("\n");
+        return `Post #${post.postId}: ${postText}\nComments:\n${commentsText}`;
+      })
+      .join("\n\n---\n\n");
+  }
+
+  const chatData = data as ParsedChat;
+  return chatData.messages.map(formatMessage).join("\n");
+}
 
 function parseArgs() {
-  const args = process.argv.slice(2);
-
-  if (args.length === 0 || args.includes("--help")) {
+  if (hasFlag("--help") || !getPositionalArg(0)) {
     console.log(`Usage:
   npx tsx src/generator.ts <inputJson> --prompt <promptFile> [--output <outputJson>]
 
@@ -18,56 +121,27 @@ Options:
     process.exit(0);
   }
 
-  const inputJson = args[0];
-
-  const getFlag = (name: string): string | undefined => {
-    const idx = args.indexOf(name);
-    if (idx !== -1 && args[idx + 1]) return args[idx + 1];
-    return undefined;
-  };
-
-  const promptFile = getFlag("--prompt");
+  const inputJson = getPositionalArg(0)!;
+  const promptFile = getStringFlag("--prompt");
   if (!promptFile) {
     console.error("Error: --prompt <file> is required.");
     process.exit(1);
   }
 
   return {
-    inputJson: inputJson!,
+    inputJson,
     promptFile,
-    outputFile: getFlag("--output"),
+    outputFile: getStringFlag("--output"),
   };
-}
-
-function formatMessagesContext(data: ParsedChat | ParsedChannelComments): string {
-  if (data.type === "channel_comments") {
-    const channelData = data as ParsedChannelComments;
-    return channelData.posts
-      .map((post) => {
-        const commentsText = post.comments
-          .map((c) => `  [${c.senderName}]: ${c.text}`)
-          .join("\n");
-        return `Post #${post.postId}: ${post.postText}\nComments:\n${commentsText}`;
-      })
-      .join("\n\n---\n\n");
-  }
-
-  const chatData = data as ParsedChat;
-  return chatData.messages
-    .map((m) => `[${m.senderName}] (${m.date}): ${m.text}`)
-    .join("\n");
 }
 
 async function main() {
   const { inputJson, promptFile, outputFile } = parseArgs();
 
-  if (!config.openaiApiKey) {
-    console.error("Error: OPENAI_API_KEY is not set in .env");
-    process.exit(1);
-  }
+  // config.openaiApiKey now throws ConfigError if missing — no manual check needed
 
   const data: ParsedChat | ParsedChannelComments = JSON.parse(
-    readFileSync(resolve(inputJson), "utf-8")
+    readFileSync(resolve(inputJson), "utf-8"),
   );
 
   const promptTemplate = readFileSync(resolve(promptFile), "utf-8");
@@ -100,18 +174,12 @@ async function main() {
     generatedAt: new Date().toISOString(),
   };
 
-  const dataDir = resolve(process.cwd(), "data");
-  mkdirSync(dataDir, { recursive: true });
-
+  const dataDir = ensureDataDir();
   const outPath =
     outputFile ??
-    resolve(
-      dataDir,
-      `${basename(inputJson, ".json")}_generated_${new Date().toISOString().replace(/[:.]/g, "-")}.json`
-    );
+    resolve(dataDir, buildTimestampedFilename(basename(inputJson, ".json"), "generated"));
 
-  writeFileSync(resolve(outPath), JSON.stringify(result, null, 2));
-  console.log(`Saved: ${outPath}`);
+  saveJson(resolve(outPath), result);
 }
 
 main().catch((err) => {

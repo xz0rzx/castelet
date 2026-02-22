@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Castelet</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Castelet</h1>
+    <nav id="step-nav">
+      <button class="step-btn active" data-step="1">1. Setup</button>
+      <button class="step-btn" data-step="2">2. Parse</button>
+      <button class="step-btn" data-step="3">3. Generate</button>
+      <button class="step-btn" data-step="4">4. Send</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Step 1: Setup -->
+    <section class="step active" id="step-1">
+      <h2>Setup</h2>
+      <div class="env-checklist" id="env-checklist">
+        <p>Checking environment...</p>
+      </div>
+      <div id="auth-section" style="display:none">
+        <h3>Telegram Authentication</h3>
+        <p id="auth-status">Start authentication to create a session.</p>
+        <div id="auth-form">
+          <button id="auth-start-btn" onclick="startAuth()">Start Auth</button>
+          <div id="auth-input-group" style="display:none">
+            <label id="auth-label">Phone number:</label>
+            <input type="text" id="auth-input" placeholder="Enter value...">
+            <button id="auth-submit-btn" onclick="submitAuth()">Submit</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Step 2: Parse -->
+    <section class="step" id="step-2">
+      <h2>Parse Telegram Data</h2>
+      <form id="parse-form" onsubmit="return runParse(event)">
+        <div class="form-group">
+          <label>Mode:</label>
+          <div class="radio-group">
+            <label><input type="radio" name="parseMode" value="messages" checked> Messages</label>
+            <label><input type="radio" name="parseMode" value="comments"> Comments</label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="chatId">Chat / Channel ID:</label>
+          <input type="text" id="chatId" required placeholder="e.g. -1001234567890">
+        </div>
+        <div class="form-group messages-opts">
+          <label for="parseLimit">Message limit:</label>
+          <input type="number" id="parseLimit" value="100" min="1">
+        </div>
+        <div class="form-group comments-opts" style="display:none">
+          <label for="parsePosts">Posts to fetch:</label>
+          <input type="number" id="parsePosts" value="10" min="1">
+        </div>
+        <div class="form-group comments-opts" style="display:none">
+          <label for="parseComments">Comments per post:</label>
+          <input type="number" id="parseComments" value="50" min="1">
+        </div>
+        <button type="submit" id="parse-btn">Parse</button>
+      </form>
+      <div class="log-panel" id="parse-log"></div>
+      <button id="parse-continue" class="continue-btn" style="display:none" onclick="continueToGenerate()">
+        Continue to Generate &rarr;
+      </button>
+    </section>
+
+    <!-- Step 3: Generate -->
+    <section class="step" id="step-3">
+      <h2>Generate with AI</h2>
+      <form id="generate-form" onsubmit="return runGenerate(event)">
+        <div class="form-group">
+          <label for="genInput">Input data file:</label>
+          <select id="genInput"></select>
+        </div>
+        <div class="form-group">
+          <label for="genPrompt">Prompt file:</label>
+          <select id="genPrompt"></select>
+        </div>
+        <div class="form-group">
+          <label>Prompt preview:</label>
+          <textarea id="promptPreview" readonly rows="6"></textarea>
+        </div>
+        <button type="submit" id="generate-btn">Generate</button>
+      </form>
+      <div class="log-panel" id="generate-log"></div>
+      <button id="generate-continue" class="continue-btn" style="display:none" onclick="continueToSend()">
+        Continue to Send &rarr;
+      </button>
+    </section>
+
+    <!-- Step 4: Send -->
+    <section class="step" id="step-4">
+      <h2>Send to Telegram</h2>
+      <form id="send-form" onsubmit="return runSend(event)">
+        <div class="form-group">
+          <label for="sendInput">Generated file:</label>
+          <select id="sendInput"></select>
+        </div>
+        <div class="form-group">
+          <label>Send mode:</label>
+          <div class="radio-group">
+            <label><input type="radio" name="sendMode" value="comment" checked> Comment on source post</label>
+            <label><input type="radio" name="sendMode" value="latest"> Comment on latest post</label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="sendDelay">Delay between sends (ms):</label>
+          <input type="number" id="sendDelay" value="2000" min="0">
+        </div>
+        <button type="submit" id="send-btn">Send</button>
+      </form>
+      <div class="log-panel" id="send-log"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

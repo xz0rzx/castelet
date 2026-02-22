@@ -1,13 +1,113 @@
 import { Api } from "telegram";
 import { createClient } from "./client.js";
-import { writeFileSync, mkdirSync } from "fs";
 import { resolve } from "path";
-import type { ParsedMessage, ParsedChat, ParsedPost, ParsedChannelComments } from "./types.js";
+import type {
+  ParsedMessage,
+  ParsedChat,
+  ParsedPost,
+  ParsedChannelComments,
+  MessageEntity,
+  MediaInfo,
+  MediaType,
+  ForwardInfo,
+  EntityType,
+} from "./types.js";
+import { hasFlag, getNumericFlag, getPositionalArg } from "./utils/cli.js";
+import { ensureDataDir, saveJson, buildTimestampedFilename } from "./utils/fs.js";
+import { withRetry } from "./utils/retry.js";
+
+// GramJS entity class name → our EntityType
+const ENTITY_TYPE_MAP: Record<string, EntityType> = {
+  MessageEntityBold: "bold",
+  MessageEntityItalic: "italic",
+  MessageEntityUnderline: "underline",
+  MessageEntityStrike: "strikethrough",
+  MessageEntityCode: "code",
+  MessageEntityPre: "pre",
+  MessageEntityTextUrl: "text_link",
+  MessageEntityMention: "mention",
+  MessageEntityMentionName: "mention",
+  MessageEntityHashtag: "hashtag",
+  MessageEntityBotCommand: "bot_command",
+  MessageEntityUrl: "url",
+  MessageEntityEmail: "email",
+  MessageEntitySpoiler: "spoiler",
+  MessageEntityBlockquote: "blockquote",
+  MessageEntityCustomEmoji: "custom_emoji",
+};
+
+function extractEntities(msg: Api.Message): MessageEntity[] {
+  if (!msg.entities) return [];
+  return msg.entities
+    .map((e) => {
+      const type = ENTITY_TYPE_MAP[e.className];
+      if (!type) return null;
+      const entity: MessageEntity = {
+        type,
+        offset: e.offset,
+        length: e.length,
+      };
+      if ("url" in e && typeof e.url === "string") entity.url = e.url;
+      if ("language" in e && typeof e.language === "string") entity.language = e.language;
+      if ("userId" in e && e.userId != null) entity.userId = String(e.userId);
+      return entity;
+    })
+    .filter((e): e is MessageEntity => e !== null);
+}
+
+function extractMedia(msg: Api.Message): MediaInfo | undefined {
+  const media = msg.media;
+  if (!media) return undefined;
+
+  let type: MediaType = "other";
+  let mimeType: string | undefined;
+  let fileName: string | undefined;
+  let fileSize: number | undefined;
+
+  if (media instanceof Api.MessageMediaPhoto) {
+    type = "photo";
+  } else if (media instanceof Api.MessageMediaDocument && media.document instanceof Api.Document) {
+    const doc = media.document;
+    mimeType = doc.mimeType;
+    fileSize = doc.size != null ? Number(doc.size) : undefined;
+
+    // Determine type from MIME or attributes
+    if (mimeType?.startsWith("video/")) {
+      type = "video";
+    } else if (mimeType?.startsWith("audio/")) {
+      type = "audio";
+    } else if (doc.attributes.some((a) => a.className === "DocumentAttributeSticker")) {
+      type = "sticker";
+    } else if (doc.attributes.some((a) => a.className === "DocumentAttributeAudio" && (a as unknown as Record<string, unknown>).voice)) {
+      type = "voice";
+    } else {
+      type = "document";
+    }
+
+    const fileAttr = doc.attributes.find((a) => a.className === "DocumentAttributeFilename");
+    if (fileAttr && "fileName" in fileAttr) fileName = String(fileAttr.fileName);
+  } else if (media instanceof Api.MessageMediaPoll) {
+    type = "poll";
+  }
+
+  const caption = msg.message || undefined;
+  return { type, ...(mimeType && { mimeType }), ...(fileName && { fileName }), ...(fileSize && { fileSize }), ...(caption && { caption }) };
+}
+
+function extractForward(msg: Api.Message): ForwardInfo | undefined {
+  const fwd = msg.fwdFrom;
+  if (!fwd) return undefined;
+
+  const info: ForwardInfo = {};
+  if (fwd.fromId) info.fromId = String(fwd.fromId);
+  if (fwd.fromName) info.fromName = fwd.fromName;
+  if (fwd.date) info.date = new Date(fwd.date * 1000).toISOString();
+  if (fwd.channelPost) info.channelPostId = fwd.channelPost;
+  return info;
+}
 
 function parseArgs() {
-  const args = process.argv.slice(2);
-
-  if (args.length === 0 || args.includes("--help")) {
+  if (hasFlag("--help") || !getPositionalArg(0)) {
     console.log(`Usage:
   npx tsx src/parser.ts messages <chatId> [--limit N]
   npx tsx src/parser.ts comments <channelId> [--posts N] [--comments-per-post N]
@@ -23,31 +123,27 @@ Options:
     process.exit(0);
   }
 
-  const mode = args[0];
-  const chatId = args[1];
+  const mode = getPositionalArg(0);
+  const chatId = getPositionalArg(1);
 
   if (!mode || !chatId) {
     console.error("Error: mode and chatId are required.");
     process.exit(1);
   }
 
-  const getFlag = (name: string, defaultVal: number): number => {
-    const idx = args.indexOf(name);
-    if (idx !== -1 && args[idx + 1]) return Number(args[idx + 1]);
-    return defaultVal;
-  };
-
   return {
     mode,
     chatId,
-    limit: getFlag("--limit", 100),
-    posts: getFlag("--posts", 10),
-    commentsPerPost: getFlag("--comments-per-post", 50),
+    limit: getNumericFlag("--limit", 100),
+    posts: getNumericFlag("--posts", 10),
+    commentsPerPost: getNumericFlag("--comments-per-post", 50),
   };
 }
 
 function toMessage(msg: Api.Message): ParsedMessage | null {
-  if (!msg.message && !msg.id) return null;
+  // Include messages with media even if text is empty
+  if (!msg.message && !msg.media && !msg.id) return null;
+
   const sender = msg.sender;
   let senderName = "Unknown";
   if (sender instanceof Api.User) {
@@ -59,25 +155,22 @@ function toMessage(msg: Api.Message): ParsedMessage | null {
   return {
     id: msg.id,
     date: new Date((msg.date ?? 0) * 1000).toISOString(),
-    senderId: Number(msg.senderId ?? 0),
+    senderId: String(msg.senderId ?? "0"),
     senderName,
     text: msg.message || "",
+    entities: extractEntities(msg),
     ...(msg.replyTo && "replyToMsgId" in msg.replyTo
       ? { replyToMsgId: msg.replyTo.replyToMsgId }
       : {}),
+    ...(() => {
+      const media = extractMedia(msg);
+      return media ? { media } : {};
+    })(),
+    ...(() => {
+      const forward = extractForward(msg);
+      return forward ? { forward } : {};
+    })(),
   };
-}
-
-function ensureDataDir(): string {
-  const dataDir = resolve(process.cwd(), "data");
-  mkdirSync(dataDir, { recursive: true });
-  return dataDir;
-}
-
-function saveJson(dataDir: string, filename: string, data: unknown) {
-  const filePath = resolve(dataDir, filename);
-  writeFileSync(filePath, JSON.stringify(data, null, 2));
-  console.log(`Saved: ${filePath}`);
 }
 
 async function fetchMessages(chatId: string, limit: number) {
@@ -110,9 +203,8 @@ async function fetchMessages(chatId: string, limit: number) {
     };
 
     const dataDir = ensureDataDir();
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const safeChatId = chatId.replace(/[^a-zA-Z0-9_-]/g, "_");
-    saveJson(dataDir, `${safeChatId}_messages_${timestamp}.json`, result);
+    const filename = buildTimestampedFilename(chatId, "messages");
+    saveJson(resolve(dataDir, filename), result);
 
     console.log(`Collected ${messages.length} messages.`);
   } finally {
@@ -141,15 +233,25 @@ async function fetchComments(chatId: string, postsCount: number, commentsPerPost
     for (const post of postMessages) {
       const comments: ParsedMessage[] = [];
       try {
-        for await (const reply of client.iterMessages(entity, {
-          replyTo: post.id,
-          limit: commentsPerPost,
-        })) {
-          if (reply instanceof Api.Message) {
-            const parsed = toMessage(reply);
-            if (parsed) comments.push(parsed);
-          }
-        }
+        await withRetry(
+          async () => {
+            for await (const reply of client.iterMessages(entity, {
+              replyTo: post.id,
+              limit: commentsPerPost,
+            })) {
+              if (reply instanceof Api.Message) {
+                const parsed = toMessage(reply);
+                if (parsed) comments.push(parsed);
+              }
+            }
+          },
+          {
+            maxRetries: 2,
+            onRetry: (err, attempt, delayMs) => {
+              console.warn(`Retrying comments for post ${post.id} (attempt ${attempt}, waiting ${delayMs}ms)...`);
+            },
+          },
+        );
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         console.warn(`Skipping comments for post ${post.id}: ${message}`);
@@ -158,6 +260,11 @@ async function fetchComments(chatId: string, postsCount: number, commentsPerPost
       posts.push({
         postId: post.id,
         postText: post.message || "",
+        postEntities: extractEntities(post),
+        ...(() => {
+          const media = extractMedia(post);
+          return media ? { postMedia: media } : {};
+        })(),
         comments,
       });
 
@@ -173,9 +280,8 @@ async function fetchComments(chatId: string, postsCount: number, commentsPerPost
     };
 
     const dataDir = ensureDataDir();
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const safeChatId = chatId.replace(/[^a-zA-Z0-9_-]/g, "_");
-    saveJson(dataDir, `${safeChatId}_comments_${timestamp}.json`, result);
+    const filename = buildTimestampedFilename(chatId, "comments");
+    saveJson(resolve(dataDir, filename), result);
 
     console.log(`Collected comments from ${posts.length} posts.`);
   } finally {

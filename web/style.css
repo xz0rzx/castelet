@@ -1,0 +1,270 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  min-height: 100vh;
+}
+
+header {
+  background: #16213e;
+  padding: 1rem 2rem;
+  border-bottom: 1px solid #0f3460;
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+}
+
+header h1 {
+  font-size: 1.3rem;
+  color: #e94560;
+  letter-spacing: 0.05em;
+}
+
+#step-nav {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.step-btn {
+  background: #0f3460;
+  color: #a0a0b0;
+  border: 1px solid #1a1a4e;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+}
+
+.step-btn:hover {
+  background: #1a3a6e;
+}
+
+.step-btn.active {
+  background: #e94560;
+  color: #fff;
+  border-color: #e94560;
+}
+
+main {
+  max-width: 800px;
+  margin: 2rem auto;
+  padding: 0 1.5rem;
+}
+
+.step {
+  display: none;
+}
+
+.step.active {
+  display: block;
+}
+
+h2 {
+  font-size: 1.2rem;
+  margin-bottom: 1.2rem;
+  color: #e94560;
+}
+
+h3 {
+  font-size: 1rem;
+  margin: 1rem 0 0.5rem;
+  color: #c0c0d0;
+}
+
+/* Env checklist */
+.env-checklist {
+  background: #16213e;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.env-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  font-size: 0.9rem;
+  font-family: monospace;
+}
+
+.env-item .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.env-item .dot.ok { background: #4caf50; }
+.env-item .dot.missing { background: #e94560; }
+
+/* Forms */
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-size: 0.85rem;
+  color: #a0a0b0;
+}
+
+input[type="text"],
+input[type="number"],
+select,
+textarea {
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  background: #16213e;
+  border: 1px solid #0f3460;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+textarea {
+  resize: vertical;
+  font-family: monospace;
+  font-size: 0.8rem;
+}
+
+.radio-group {
+  display: flex;
+  gap: 1.2rem;
+}
+
+.radio-group label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+  color: #e0e0e0;
+  cursor: pointer;
+}
+
+button[type="submit"],
+button#auth-start-btn,
+button#auth-submit-btn {
+  background: #e94560;
+  color: #fff;
+  border: none;
+  padding: 0.6rem 1.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+}
+
+button[type="submit"]:hover,
+button#auth-start-btn:hover,
+button#auth-submit-btn:hover {
+  background: #c73550;
+}
+
+button[type="submit"]:disabled,
+button#auth-start-btn:disabled {
+  background: #555;
+  cursor: not-allowed;
+}
+
+.continue-btn {
+  display: inline-block;
+  margin-top: 1rem;
+  background: #0f3460;
+  color: #e0e0e0;
+  border: 1px solid #1a3a6e;
+  padding: 0.6rem 1.2rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+}
+
+.continue-btn:hover {
+  background: #1a3a6e;
+}
+
+/* Log panel */
+.log-panel {
+  background: #0d1117;
+  border: 1px solid #0f3460;
+  border-radius: 6px;
+  padding: 0.8rem;
+  margin-top: 1rem;
+  max-height: 350px;
+  overflow-y: auto;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  min-height: 60px;
+}
+
+.log-panel:empty::before {
+  content: "Waiting for output...";
+  color: #555;
+}
+
+.log-line { color: #c9d1d9; }
+.log-line.stderr { color: #f08060; }
+.log-line.info { color: #58a6ff; }
+
+/* Auth */
+#auth-section {
+  background: #16213e;
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+#auth-input-group {
+  display: flex;
+  gap: 0.5rem;
+  align-items: end;
+  margin-top: 0.5rem;
+}
+
+#auth-input-group label {
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  color: #a0a0b0;
+  align-self: center;
+}
+
+#auth-input {
+  flex: 1;
+}
+
+#auth-status {
+  font-size: 0.85rem;
+  color: #a0a0b0;
+  margin-bottom: 0.5rem;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0d1117;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 3px;
+}
