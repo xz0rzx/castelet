@@ -16,7 +16,8 @@ Options:
   --mode <mode>        Send mode for channels:
                          comment  - comment under the specific post (default)
                          latest   - comment under the most recent post
-  --delay N            Delay between sends in milliseconds (default: 2000)`);
+  --delay N            Delay between sends in milliseconds (default: 2000)
+  --session <name>     Use a named Telegram session`);
     process.exit(0);
   }
 
@@ -24,6 +25,7 @@ Options:
     inputJson: getPositionalArg(0)!,
     mode: (getStringFlag("--mode", "comment")) as "comment" | "latest",
     delay: getNumericFlag("--delay", 2000),
+    session: getStringFlag("--session"),
   };
 }
 
@@ -73,14 +75,14 @@ async function fetchLatestPostId(
 }
 
 async function main() {
-  const { inputJson, mode, delay } = parseArgs();
+  const { inputJson, mode, delay, session } = parseArgs();
 
   const inputPath = resolve(inputJson);
   const data: GeneratedOutput = JSON.parse(
     readFileSync(inputPath, "utf-8"),
   );
 
-  const client = await createClient();
+  const client = await createClient(session);
 
   try {
     for (let i = 0; i < data.generatedTexts.length; i++) {

@@ -1,12 +1,17 @@
 import "dotenv/config";
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
-import { resolve, extname } from "node:path";
+import { resolve, extname, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { exec } from "node:child_process";
 import { handleApi } from "./api.js";
+import { migrateFromEnv } from "../session-store.js";
 
+migrateFromEnv();
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.CASTELET_PORT) || 3333;
-const WEB_DIR = resolve(import.meta.dirname, "..", "..", "web");
+const WEB_DIR = resolve(__dirname, "..", "..", "web");
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -37,6 +42,7 @@ function serveStatic(path: string, res: import("node:http").ServerResponse) {
     const ext = extname(filePath);
     res.writeHead(200, {
       "Content-Type": MIME_TYPES[ext] || "application/octet-stream",
+      "Cache-Control": "no-cache",
     });
     res.end(content);
   } catch {
@@ -66,8 +72,9 @@ server.listen(PORT, () => {
   const url = `http://localhost:${PORT}`;
   console.log(`Castelet UI running at ${url}`);
 
-  // Auto-open browser on macOS
-  if (process.platform === "darwin") {
-    exec(`open ${url}`);
-  }
+  // Auto-open browser
+  const openCmd =
+    process.platform === "darwin" ? "open" :
+    process.platform === "win32" ? "start" : "xdg-open";
+  exec(`${openCmd} ${url}`);
 });

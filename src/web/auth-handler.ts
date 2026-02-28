@@ -1,8 +1,8 @@
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 import { config } from "../config.js";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { addSession, setActiveSession } from "../session-store.js";
+import type { TgSession } from "../types.js";
 
 type AuthStep = "phone" | "code" | "password" | "done";
 
@@ -11,11 +11,13 @@ interface AuthState {
   step: AuthStep;
   resolve: ((value: string) => void) | null;
   error: string | null;
+  sessionName: string;
+  phone: string;
 }
 
 let authState: AuthState | null = null;
 
-export async function startAuth(): Promise<{ step: AuthStep }> {
+export async function startAuth(sessionName: string): Promise<{ step: AuthStep }> {
   if (authState) {
     throw new Error("Auth already in progress. Complete or cancel it first.");
   }
@@ -32,6 +34,8 @@ export async function startAuth(): Promise<{ step: AuthStep }> {
     step: "phone",
     resolve: null,
     error: null,
+    sessionName,
+    phone: "",
   };
 
   // Start auth in background — callbacks will wait for respondAuth()
@@ -57,11 +61,32 @@ export async function startAuth(): Promise<{ step: AuthStep }> {
   });
 
   authPromise
-    .then(() => {
+    .then(async () => {
       if (!authState) return;
-      // Save session to .env
       const sessionString = authState.client.session.save() as unknown as string;
-      saveSessionToEnv(sessionString);
+
+      // Fetch display name
+      let displayName = authState.sessionName;
+      try {
+        const me = await authState.client.getMe();
+        if (me && "firstName" in me) {
+          displayName = [me.firstName, me.lastName].filter(Boolean).join(" ") || displayName;
+        }
+      } catch {
+        // ignore — use sessionName as fallback
+      }
+
+      const entry: TgSession = {
+        name: authState.sessionName,
+        sessionString,
+        phone: authState.phone,
+        displayName,
+        createdAt: new Date().toISOString(),
+        lastUsedAt: null,
+      };
+      addSession(entry);
+      setActiveSession(entry.name);
+
       authState.step = "done";
       authState.resolve = null;
     })
@@ -86,11 +111,14 @@ export function respondAuth(value: string): { step: AuthStep; error: string | nu
     return { step: authState.step, error: authState.error };
   }
 
+  // Capture phone number during phone step
+  if (authState.step === "phone") {
+    authState.phone = value;
+  }
+
   authState.resolve(value);
   authState.resolve = null;
 
-  // Return current step — the next callback hasn't fired yet,
-  // so caller should poll or wait for the next step
   return { step: authState.step, error: authState.error };
 }
 
@@ -108,24 +136,4 @@ export async function cancelAuth(): Promise<void> {
     }
     authState = null;
   }
-}
-
-function saveSessionToEnv(sessionString: string) {
-  const envPath = resolve(process.cwd(), ".env");
-  if (existsSync(envPath)) {
-    let envContent = readFileSync(envPath, "utf-8");
-    if (envContent.match(/^TG_SESSION=.*$/m)) {
-      envContent = envContent.replace(
-        /^TG_SESSION=.*$/m,
-        `TG_SESSION=${sessionString}`
-      );
-    } else {
-      envContent += `\nTG_SESSION=${sessionString}\n`;
-    }
-    writeFileSync(envPath, envContent);
-  } else {
-    writeFileSync(envPath, `TG_SESSION=${sessionString}\n`);
-  }
-  // Update process.env so config picks it up
-  process.env.TG_SESSION = sessionString;
 }

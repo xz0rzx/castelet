@@ -1,122 +1,183 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Castelet</title>
+  <title>Castelet — Автоматизация Telegram</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Manrope:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div class="grain" aria-hidden="true"></div>
+
   <header>
-    <h1>Castelet</h1>
+    <div class="header-brand">
+      <h1>Castelet</h1>
+      <span class="header-sub">управление Telegram</span>
+    </div>
     <nav id="step-nav">
-      <button class="step-btn active" data-step="1">1. Setup</button>
-      <button class="step-btn" data-step="2">2. Parse</button>
-      <button class="step-btn" data-step="3">3. Generate</button>
-      <button class="step-btn" data-step="4">4. Send</button>
+      <button class="step-btn active" data-step="1">
+        <span class="step-idx">I</span>
+        <span class="step-title">Настройка</span>
+      </button>
+      <button class="step-btn" data-step="2">
+        <span class="step-idx">II</span>
+        <span class="step-title">Сбор</span>
+      </button>
+      <button class="step-btn" data-step="3">
+        <span class="step-idx">III</span>
+        <span class="step-title">Генерация</span>
+      </button>
+      <button class="step-btn" data-step="4">
+        <span class="step-idx">IV</span>
+        <span class="step-title">Отправка</span>
+      </button>
     </nav>
   </header>
 
   <main>
-    <!-- Step 1: Setup -->
+    <!-- Шаг 1: Настройка -->
     <section class="step active" id="step-1">
-      <h2>Setup</h2>
-      <div class="env-checklist" id="env-checklist">
-        <p>Checking environment...</p>
+      <div class="step-header">
+        <h2>Настройка</h2>
+        <p class="step-desc">Убедитесь, что все подключения настроены перед началом работы.</p>
       </div>
-      <div id="auth-section" style="display:none">
-        <h3>Telegram Authentication</h3>
-        <p id="auth-status">Start authentication to create a session.</p>
-        <div id="auth-form">
-          <button id="auth-start-btn" onclick="startAuth()">Start Auth</button>
-          <div id="auth-input-group" style="display:none">
-            <label id="auth-label">Phone number:</label>
-            <input type="text" id="auth-input" placeholder="Enter value...">
-            <button id="auth-submit-btn" onclick="submitAuth()">Submit</button>
+      <div class="env-checklist" id="env-checklist">
+        <p>Проверка подключений...</p>
+      </div>
+      <div id="sessions-section">
+        <h3>Сессии Telegram</h3>
+        <div id="sessions-list" class="sessions-list"></div>
+        <button id="add-session-btn" class="add-session-btn" onclick="startNewSession()">+ Добавить аккаунт</button>
+        <div id="new-session-form" style="display:none">
+          <div class="form-group">
+            <label for="new-session-name">Имя сессии (латиница, цифры, дефис):</label>
+            <input type="text" id="new-session-name" placeholder="напр. work, personal" maxlength="32">
+          </div>
+          <p id="auth-status">Подключите аккаунт Telegram.</p>
+          <div id="auth-form">
+            <button id="auth-start-btn" onclick="startAuthWithName()">Войти в Telegram</button>
+            <div id="auth-input-group" style="display:none">
+              <label id="auth-label">Номер телефона:</label>
+              <input type="text" id="auth-input" placeholder="Введите значение...">
+              <button id="auth-submit-btn" onclick="submitAuth()">Подтвердить</button>
+            </div>
+            <button id="auth-cancel-btn" class="auth-cancel-btn" onclick="cancelNewSession()">Отмена</button>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- Step 2: Parse -->
+    <!-- Шаг 2: Сбор -->
     <section class="step" id="step-2">
-      <h2>Parse Telegram Data</h2>
+      <div class="step-header">
+        <h2>Сбор сообщений</h2>
+        <p class="step-desc">Извлеките сообщения или комментарии из чата или канала Telegram.</p>
+      </div>
       <form id="parse-form" onsubmit="return runParse(event)">
+        <div class="form-group" id="parse-session-group" style="display:none">
+          <label for="parse-session">Сессия Telegram:</label>
+          <select id="parse-session"></select>
+        </div>
         <div class="form-group">
-          <label>Mode:</label>
+          <label>Что собирать:</label>
           <div class="radio-group">
-            <label><input type="radio" name="parseMode" value="messages" checked> Messages</label>
-            <label><input type="radio" name="parseMode" value="comments"> Comments</label>
+            <label><input type="radio" name="parseMode" value="messages" checked> Сообщения чата</label>
+            <label><input type="radio" name="parseMode" value="comments"> Комментарии к постам</label>
           </div>
         </div>
         <div class="form-group">
-          <label for="chatId">Chat / Channel ID:</label>
-          <input type="text" id="chatId" required placeholder="e.g. -1001234567890">
+          <label for="chatId">Имя или ID чата / канала:</label>
+          <input type="text" id="chatId" required placeholder="напр. @mychannel или -1001234567890">
         </div>
         <div class="form-group messages-opts">
-          <label for="parseLimit">Message limit:</label>
+          <label for="parseLimit">Количество сообщений:</label>
           <input type="number" id="parseLimit" value="100" min="1">
         </div>
         <div class="form-group comments-opts" style="display:none">
-          <label for="parsePosts">Posts to fetch:</label>
+          <label for="parsePosts">Количество постов:</label>
           <input type="number" id="parsePosts" value="10" min="1">
         </div>
         <div class="form-group comments-opts" style="display:none">
-          <label for="parseComments">Comments per post:</label>
+          <label for="parseComments">Комментариев на пост:</label>
           <input type="number" id="parseComments" value="50" min="1">
         </div>
-        <button type="submit" id="parse-btn">Parse</button>
+        <button type="submit" id="parse-btn">Собрать</button>
       </form>
       <div class="log-panel" id="parse-log"></div>
+      <div id="parse-results" class="results-panel" style="display:none">
+        <button class="results-toggle" id="parse-results-toggle">Показать собранные данные &#9662;</button>
+        <div class="results-content" id="parse-results-content"></div>
+      </div>
       <button id="parse-continue" class="continue-btn" style="display:none" onclick="continueToGenerate()">
-        Continue to Generate &rarr;
+        Перейти к генерации &rarr;
       </button>
     </section>
 
-    <!-- Step 3: Generate -->
+    <!-- Шаг 3: Генерация -->
     <section class="step" id="step-3">
-      <h2>Generate with AI</h2>
+      <div class="step-header">
+        <h2>Генерация текста</h2>
+        <p class="step-desc">Используйте ИИ для создания нового текста на основе собранных сообщений.</p>
+      </div>
       <form id="generate-form" onsubmit="return runGenerate(event)">
         <div class="form-group">
-          <label for="genInput">Input data file:</label>
-          <select id="genInput"></select>
+          <div class="prompt-label-row">
+            <label>Промпт (можно редактировать):</label>
+            <button type="button" class="prompt-reset-btn" id="promptReset" style="display:none">Сбросить</button>
+          </div>
+          <textarea id="promptPreview" rows="12"></textarea>
         </div>
-        <div class="form-group">
-          <label for="genPrompt">Prompt file:</label>
-          <select id="genPrompt"></select>
-        </div>
-        <div class="form-group">
-          <label>Prompt preview:</label>
-          <textarea id="promptPreview" readonly rows="6"></textarea>
-        </div>
-        <button type="submit" id="generate-btn">Generate</button>
+        <button type="submit" id="generate-btn">Сгенерировать</button>
       </form>
-      <div class="log-panel" id="generate-log"></div>
-      <button id="generate-continue" class="continue-btn" style="display:none" onclick="continueToSend()">
-        Continue to Send &rarr;
-      </button>
-    </section>
-
-    <!-- Step 4: Send -->
-    <section class="step" id="step-4">
-      <h2>Send to Telegram</h2>
-      <form id="send-form" onsubmit="return runSend(event)">
-        <div class="form-group">
-          <label for="sendInput">Generated file:</label>
-          <select id="sendInput"></select>
+      <div id="generate-loading" class="loading-card" style="display:none">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">
+          <span class="loading-title">Генерация текста...</span>
+          <span class="loading-detail">Ожидание ответа от ИИ, это может занять некоторое время</span>
         </div>
-        <div class="form-group">
-          <label>Send mode:</label>
-          <div class="radio-group">
-            <label><input type="radio" name="sendMode" value="comment" checked> Comment on source post</label>
-            <label><input type="radio" name="sendMode" value="latest"> Comment on latest post</label>
+      </div>
+      <div class="log-panel" id="generate-log"></div>
+      <div id="generate-results" class="results-panel" style="display:none">
+        <div class="generated-results-header">
+          <span class="generated-results-label">Сгенерированный текст</span>
+          <div class="generated-results-actions">
+            <button type="button" class="save-generated-btn" id="saveGenerated" style="display:none" onclick="saveGeneratedText()">Сохранить изменения</button>
           </div>
         </div>
-        <div class="form-group">
-          <label for="sendDelay">Delay between sends (ms):</label>
-          <input type="number" id="sendDelay" value="2000" min="0">
+        <div class="results-content" id="generate-results-content"></div>
+      </div>
+      <div id="generate-actions" style="display:none">
+        <button id="regenerate-btn" class="regenerate-btn" onclick="regenerate()">Сгенерировать заново</button>
+        <button id="generate-continue" class="continue-btn" onclick="continueToSend()">
+          Перейти к отправке &rarr;
+        </button>
+      </div>
+    </section>
+
+    <!-- Шаг 4: Отправка -->
+    <section class="step" id="step-4">
+      <div class="step-header">
+        <h2>Отправка в Telegram</h2>
+        <p class="step-desc">Опубликуйте сгенерированный текст обратно в Telegram.</p>
+      </div>
+      <form id="send-form" onsubmit="return runSend(event)">
+        <div class="form-group" id="send-session-group" style="display:none">
+          <label for="send-session">Сессия Telegram:</label>
+          <select id="send-session"></select>
         </div>
-        <button type="submit" id="send-btn">Send</button>
+        <div id="send-preview" class="results-panel" style="display:none">
+          <div class="generated-results-header">
+            <span class="generated-results-label">Сообщение для отправки</span>
+            <div class="generated-results-actions">
+              <button type="button" class="save-generated-btn" id="saveSendEdits" style="display:none" onclick="saveSendEdits()">Сохранить изменения</button>
+            </div>
+          </div>
+          <div class="results-content" id="send-preview-body"></div>
+        </div>
+        <button type="submit" id="send-btn">Отправить</button>
       </form>
       <div class="log-panel" id="send-log"></div>
     </section>

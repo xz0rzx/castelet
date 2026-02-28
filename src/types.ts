@@ -91,3 +91,17 @@ export interface GeneratedOutput {
   generatedTexts: { targetId: string; text: string }[];
   generatedAt: string;
 }
+
+export interface TgSession {
+  name: string;
+  sessionString: string;
+  phone: string;
+  displayName: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface SessionRegistry {
+  activeSession: string;
+  sessions: TgSession[];
+}

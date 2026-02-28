@@ -8,7 +8,7 @@
     "parse": "tsx src/parser.ts",
     "generate": "tsx src/generator.ts",
     "send": "tsx src/sender.ts",
-    "ui": "tsx src/web/server.ts"
+    "ui": "tsx watch src/web/server.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
