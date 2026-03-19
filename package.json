@@ -11,12 +11,14 @@
     "ui": "tsx watch src/web/server.ts"
   },
   "dependencies": {
+    "better-sqlite3": "^12.8.0",
     "dotenv": "^16.4.7",
     "input": "^1.0.1",
     "openai": "^4.77.0",
     "telegram": "^2.26.16"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"

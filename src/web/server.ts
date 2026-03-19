@@ -6,8 +6,10 @@ import { fileURLToPath } from "node:url";
 import { exec } from "node:child_process";
 import { handleApi } from "./api.js";
 import { migrateFromEnv } from "../session-store.js";
+import { cleanupStaleWorkspaces, initWorkspaceServices } from "./workspace-service.js";
 
 migrateFromEnv();
+initWorkspaceServices();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.CASTELET_PORT) || 3333;
@@ -21,6 +23,8 @@ const MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".svg": "image/svg+xml",
 };
+
+const WORKSPACE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function serveStatic(path: string, res: import("node:http").ServerResponse) {
   let filePath: string;
@@ -78,3 +82,7 @@ server.listen(PORT, () => {
     process.platform === "win32" ? "start" : "xdg-open";
   exec(`${openCmd} ${url}`);
 });
+
+setInterval(() => {
+  cleanupStaleWorkspaces(WORKSPACE_TTL_MS);
+}, 60 * 60 * 1000);

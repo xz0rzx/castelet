@@ -117,7 +117,8 @@ function parseArgs() {
 Options:
   <inputJson>          Path to collected data JSON (from parser)
   --prompt <file>      Path to prompt template file (e.g., prompts/default.txt)
-  --output <file>      Custom output path (default: data/<name>_generated_<timestamp>.json)`);
+  --output <file>      Custom output path (default: data/<name>_generated_<timestamp>.json)
+  --workspace-dir <dir>  Custom workspace data directory for default output`);
     process.exit(0);
   }
 
@@ -132,11 +133,12 @@ Options:
     inputJson,
     promptFile,
     outputFile: getStringFlag("--output"),
+    workspaceDir: getStringFlag("--workspace-dir"),
   };
 }
 
 async function main() {
-  const { inputJson, promptFile, outputFile } = parseArgs();
+  const { inputJson, promptFile, outputFile, workspaceDir } = parseArgs();
 
   // config.openaiApiKey now throws ConfigError if missing — no manual check needed
 
@@ -174,7 +176,7 @@ async function main() {
     generatedAt: new Date().toISOString(),
   };
 
-  const dataDir = ensureDataDir();
+  const dataDir = ensureDataDir(workspaceDir);
   const outPath =
     outputFile ??
     resolve(dataDir, buildTimestampedFilename(basename(inputJson, ".json"), "generated"));

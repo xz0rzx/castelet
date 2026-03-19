@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { TgSession, SessionRegistry } from "./types.js";
+import type { TgSession, SessionRegistry, ProxyConfig } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SESSIONS_PATH = resolve(
@@ -59,6 +59,37 @@ export function addSession(session: TgSession): void {
     reg.sessions.push(session);
   }
   saveRegistry(reg);
+}
+
+export function updateSession(
+  name: string,
+  patch: {
+    displayName?: string;
+    phone?: string;
+    proxy?: ProxyConfig;
+    clearProxy?: boolean;
+  },
+): boolean {
+  const reg = loadRegistry();
+  const idx = reg.sessions.findIndex((s) => s.name === name);
+  if (idx === -1) return false;
+
+  const current = reg.sessions[idx];
+  const next: TgSession = {
+    ...current,
+    ...(patch.displayName !== undefined ? { displayName: patch.displayName } : {}),
+    ...(patch.phone !== undefined ? { phone: patch.phone } : {}),
+  };
+
+  if (patch.clearProxy) {
+    delete next.proxy;
+  } else if (patch.proxy) {
+    next.proxy = patch.proxy;
+  }
+
+  reg.sessions[idx] = next;
+  saveRegistry(reg);
+  return true;
 }
 
 export function deleteSession(name: string): boolean {

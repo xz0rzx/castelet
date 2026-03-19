@@ -120,7 +120,8 @@ Options:
   --limit N              Number of messages to fetch (default: 100)
   --posts N              Number of posts to fetch comments from (default: 10)
   --comments-per-post N  Max comments per post (default: 50)
-  --session <name>       Use a named Telegram session`);
+  --session <name>       Use a named Telegram session
+  --workspace-dir <dir>  Custom output workspace data directory`);
     process.exit(0);
   }
 
@@ -139,6 +140,7 @@ Options:
     posts: getNumericFlag("--posts", 10),
     commentsPerPost: getNumericFlag("--comments-per-post", 50),
     session: getStringFlag("--session"),
+    workspaceDir: getStringFlag("--workspace-dir"),
   };
 }
 
@@ -175,7 +177,7 @@ function toMessage(msg: Api.Message): ParsedMessage | null {
   };
 }
 
-async function fetchMessages(chatId: string, limit: number, session?: string) {
+async function fetchMessages(chatId: string, limit: number, session?: string, workspaceDir?: string) {
   const client = await createClient(session);
   try {
     const entity = await client.getEntity(chatId);
@@ -204,7 +206,7 @@ async function fetchMessages(chatId: string, limit: number, session?: string) {
       messages,
     };
 
-    const dataDir = ensureDataDir();
+    const dataDir = ensureDataDir(workspaceDir);
     const filename = buildTimestampedFilename(chatId, "messages");
     saveJson(resolve(dataDir, filename), result);
 
@@ -214,7 +216,13 @@ async function fetchMessages(chatId: string, limit: number, session?: string) {
   }
 }
 
-async function fetchComments(chatId: string, postsCount: number, commentsPerPost: number, session?: string) {
+async function fetchComments(
+  chatId: string,
+  postsCount: number,
+  commentsPerPost: number,
+  session?: string,
+  workspaceDir?: string,
+) {
   const client = await createClient(session);
   try {
     const entity = await client.getEntity(chatId);
@@ -281,7 +289,7 @@ async function fetchComments(chatId: string, postsCount: number, commentsPerPost
       posts,
     };
 
-    const dataDir = ensureDataDir();
+    const dataDir = ensureDataDir(workspaceDir);
     const filename = buildTimestampedFilename(chatId, "comments");
     saveJson(resolve(dataDir, filename), result);
 
@@ -292,12 +300,12 @@ async function fetchComments(chatId: string, postsCount: number, commentsPerPost
 }
 
 async function main() {
-  const { mode, chatId, limit, posts, commentsPerPost, session } = parseArgs();
+  const { mode, chatId, limit, posts, commentsPerPost, session, workspaceDir } = parseArgs();
 
   if (mode === "messages") {
-    await fetchMessages(chatId, limit, session);
+    await fetchMessages(chatId, limit, session, workspaceDir);
   } else if (mode === "comments") {
-    await fetchComments(chatId, posts, commentsPerPost, session);
+    await fetchComments(chatId, posts, commentsPerPost, session, workspaceDir);
   } else {
     console.error(`Unknown mode: ${mode}. Use "messages" or "comments".`);
     process.exit(1);

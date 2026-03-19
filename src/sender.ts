@@ -17,7 +17,8 @@ Options:
                          comment  - comment under the specific post (default)
                          latest   - comment under the most recent post
   --delay N            Delay between sends in milliseconds (default: 2000)
-  --session <name>     Use a named Telegram session`);
+  --session <name>     Use a named Telegram session
+  --workspace-dir <dir>  Workspace directory (reserved for workspace mode)`);
     process.exit(0);
   }
 
@@ -26,6 +27,7 @@ Options:
     mode: (getStringFlag("--mode", "comment")) as "comment" | "latest",
     delay: getNumericFlag("--delay", 2000),
     session: getStringFlag("--session"),
+    workspaceDir: getStringFlag("--workspace-dir"),
   };
 }
 

@@ -85,6 +85,27 @@ export interface ParsedChannelComments {
   posts: ParsedPost[];
 }
 
+export interface ProxyConfigSocks {
+  ip: string;
+  port: number;
+  timeout?: number;
+  username?: string;
+  password?: string;
+  socksType: 4 | 5;
+}
+
+export interface ProxyConfigMTProxy {
+  ip: string;
+  port: number;
+  timeout?: number;
+  username?: string;
+  password?: string;
+  secret: string;
+  MTProxy: true;
+}
+
+export type ProxyConfig = ProxyConfigSocks | ProxyConfigMTProxy;
+
 export interface GeneratedOutput {
   sourceFile: string;
   prompt: string;
@@ -99,6 +120,7 @@ export interface TgSession {
   displayName: string;
   createdAt: string;
   lastUsedAt: string | null;
+  proxy?: ProxyConfig;
 }
 
 export interface SessionRegistry {

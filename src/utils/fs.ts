@@ -7,8 +7,8 @@
 import { writeFileSync, mkdirSync } from "fs";
 import { resolve } from "path";
 
-export function ensureDataDir(): string {
-  const dataDir = resolve(process.cwd(), "data");
+export function ensureDataDir(baseDir?: string): string {
+  const dataDir = baseDir ? resolve(baseDir) : resolve(process.cwd(), "data");
   mkdirSync(dataDir, { recursive: true });
   return dataDir;
 }

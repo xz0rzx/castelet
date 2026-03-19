@@ -1,74 +1,123 @@
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
+import { randomUUID } from "node:crypto";
 import { config } from "../config.js";
-import { addSession, setActiveSession } from "../session-store.js";
-import type { TgSession } from "../types.js";
+import { addSession } from "../session-store.js";
+import { testProxyConnectivity } from "../proxy-check.js";
+import {
+  getTabActiveAuthFlow,
+  getTabLatestAuthFlow,
+  setAuthFlowError,
+  setAuthFlowPhone,
+  setAuthFlowStep,
+  setTabWorkspaceSelectedSession,
+  startTabAuthFlow,
+} from "./workspace-service.js";
+import type { TgSession, ProxyConfig } from "../types.js";
 
 type AuthStep = "phone" | "code" | "password" | "done";
 
-interface AuthState {
+interface RuntimeAuthState {
+  flowId: string;
+  tabId: string;
   client: TelegramClient;
   step: AuthStep;
   resolve: ((value: string) => void) | null;
   error: string | null;
   sessionName: string;
   phone: string;
+  proxy?: ProxyConfig;
 }
 
-let authState: AuthState | null = null;
+const authStates = new Map<string, RuntimeAuthState>();
 
-export async function startAuth(sessionName: string): Promise<{ step: AuthStep }> {
-  if (authState) {
-    throw new Error("Auth already in progress. Complete or cancel it first.");
+function getAuthState(tabId: string): RuntimeAuthState | null {
+  return authStates.get(tabId) ?? null;
+}
+
+function setStep(state: RuntimeAuthState, step: AuthStep): void {
+  state.step = step;
+  setAuthFlowStep(state.flowId, step);
+}
+
+function setError(state: RuntimeAuthState, error: string | null): void {
+  state.error = error;
+  setAuthFlowError(state.flowId, error);
+}
+
+export async function startAuth(tabId: string, sessionName: string, proxy?: ProxyConfig): Promise<{ step: AuthStep }> {
+  if (getAuthState(tabId)) {
+    throw new Error("Auth already in progress in this tab. Complete or cancel it first.");
   }
+
+  if (proxy) {
+    await testProxyConnectivity(proxy);
+  }
+
+  const flowId = randomUUID();
+  startTabAuthFlow(flowId, tabId, sessionName, proxy);
 
   const client = new TelegramClient(
     new StringSession(""),
     config.tgApiId,
     config.tgApiHash,
-    { connectionRetries: 5 }
+    {
+      connectionRetries: 5,
+      ...(proxy ? { proxy } : {}),
+    }
   );
 
-  authState = {
+  const authState: RuntimeAuthState = {
+    flowId,
+    tabId,
     client,
     step: "phone",
     resolve: null,
     error: null,
     sessionName,
     phone: "",
+    proxy,
   };
+  authStates.set(tabId, authState);
 
-  // Start auth in background — callbacks will wait for respondAuth()
   const authPromise = client.start({
     phoneNumber: () =>
       new Promise<string>((res) => {
-        authState!.step = "phone";
-        authState!.resolve = res;
+        const state = getAuthState(tabId);
+        if (!state) throw new Error("Auth state is missing.");
+        setStep(state, "phone");
+        state.resolve = res;
       }),
     phoneCode: () =>
       new Promise<string>((res) => {
-        authState!.step = "code";
-        authState!.resolve = res;
+        const state = getAuthState(tabId);
+        if (!state) throw new Error("Auth state is missing.");
+        setStep(state, "code");
+        state.resolve = res;
       }),
     password: () =>
       new Promise<string>((res) => {
-        authState!.step = "password";
-        authState!.resolve = res;
+        const state = getAuthState(tabId);
+        if (!state) throw new Error("Auth state is missing.");
+        setStep(state, "password");
+        state.resolve = res;
       }),
     onError: (err) => {
-      if (authState) authState.error = err.message;
+      const state = getAuthState(tabId);
+      if (state) setError(state, err.message);
     },
   });
 
   authPromise
     .then(async () => {
-      if (!authState) return;
-      const sessionString = authState.client.session.save() as unknown as string;
+      const state = getAuthState(tabId);
+      if (!state) return;
 
-      // Fetch display name
-      let displayName = authState.sessionName;
+      const sessionString = state.client.session.save() as unknown as string;
+
+      let displayName = state.sessionName;
       try {
-        const me = await authState.client.getMe();
+        const me = await state.client.getMe();
         if (me && "firstName" in me) {
           displayName = [me.firstName, me.lastName].filter(Boolean).join(" ") || displayName;
         }
@@ -77,63 +126,90 @@ export async function startAuth(sessionName: string): Promise<{ step: AuthStep }
       }
 
       const entry: TgSession = {
-        name: authState.sessionName,
+        name: state.sessionName,
         sessionString,
-        phone: authState.phone,
+        phone: state.phone,
         displayName,
         createdAt: new Date().toISOString(),
         lastUsedAt: null,
+        ...(state.proxy ? { proxy: state.proxy } : {}),
       };
       addSession(entry);
-      setActiveSession(entry.name);
-
-      authState.step = "done";
-      authState.resolve = null;
+      setTabWorkspaceSelectedSession(tabId, entry.name);
+      setError(state, null);
+      setStep(state, "done");
+      state.resolve = null;
+      authStates.delete(tabId);
+      await state.client.disconnect().catch(() => {});
     })
-    .catch((err) => {
-      if (authState) {
-        authState.error = err.message;
-        authState.step = "done";
-      }
+    .catch(async (err) => {
+      const state = getAuthState(tabId);
+      if (!state) return;
+      setError(state, err.message);
+      setStep(state, "done");
+      authStates.delete(tabId);
+      await state.client.disconnect().catch(() => {});
     });
 
-  // Wait a tick for the first callback to fire
   await new Promise((r) => setTimeout(r, 500));
-
   return { step: authState.step };
 }
 
-export function respondAuth(value: string): { step: AuthStep; error: string | null } {
+export function respondAuth(tabId: string, value: string): { step: AuthStep; error: string | null } {
+  const authState = getAuthState(tabId);
   if (!authState) {
-    throw new Error("No auth in progress.");
+    const flow = getTabLatestAuthFlow(tabId);
+    if (!flow) {
+      throw new Error("No auth in progress.");
+    }
+    return {
+      step: flow.step === "done" || flow.step === "error" || flow.step === "cancelled" ? "done" : (flow.step as AuthStep),
+      error: flow.errorMessage,
+    };
   }
   if (!authState.resolve) {
     return { step: authState.step, error: authState.error };
   }
 
-  // Capture phone number during phone step
   if (authState.step === "phone") {
     authState.phone = value;
+    setAuthFlowPhone(authState.flowId, value);
   }
 
+  setError(authState, null);
   authState.resolve(value);
   authState.resolve = null;
-
   return { step: authState.step, error: authState.error };
 }
 
-export function getAuthStep(): { step: AuthStep; error: string | null } | null {
-  if (!authState) return null;
-  return { step: authState.step, error: authState.error };
-}
-
-export async function cancelAuth(): Promise<void> {
+export function getAuthStep(tabId: string): { step: AuthStep; error: string | null } | null {
+  const authState = getAuthState(tabId);
   if (authState) {
-    try {
-      await authState.client.disconnect();
-    } catch {
-      // ignore
+    return { step: authState.step, error: authState.error };
+  }
+  const flow = getTabLatestAuthFlow(tabId);
+  if (!flow) return null;
+  const step = flow.step === "done" || flow.step === "error" || flow.step === "cancelled"
+    ? "done"
+    : (flow.step as AuthStep);
+  return { step, error: flow.errorMessage };
+}
+
+export async function cancelAuth(tabId: string): Promise<void> {
+  const authState = getAuthState(tabId);
+  if (!authState) {
+    const flow = getTabActiveAuthFlow(tabId);
+    if (flow) {
+      setAuthFlowStep(flow.id, "cancelled");
     }
-    authState = null;
+    return;
+  }
+  try {
+    await authState.client.disconnect();
+  } catch {
+    // ignore
+  } finally {
+    setAuthFlowStep(authState.flowId, "cancelled");
+    authStates.delete(tabId);
   }
 }
