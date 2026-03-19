@@ -15,7 +15,8 @@
   <header>
     <div class="header-brand">
       <h1>Castelet</h1>
-      <span class="header-sub">управление Telegram</span>
+      <div id="tab-session-indicator" class="tab-session-indicator"></div>
+      <div id="active-jobs-badge" class="active-jobs-badge"></div>
     </div>
     <nav id="step-nav">
       <button class="step-btn active" data-step="1">
@@ -44,17 +45,61 @@
         <h2>Настройка</h2>
         <p class="step-desc">Убедитесь, что все подключения настроены перед началом работы.</p>
       </div>
-      <div class="env-checklist" id="env-checklist">
-        <p>Проверка подключений...</p>
-      </div>
+      <div id="env-warning" class="env-warning" style="display:none"></div>
       <div id="sessions-section">
-        <h3>Сессии Telegram</h3>
+        <div class="sessions-section-head">
+          <h3>Сессии Telegram</h3>
+          <span class="sessions-summary" id="sessions-summary">0 аккаунтов</span>
+        </div>
+        <p class="sessions-subtitle">Выберите, какой аккаунт будет использоваться в этой вкладке.</p>
         <div id="sessions-list" class="sessions-list"></div>
         <button id="add-session-btn" class="add-session-btn" onclick="startNewSession()">+ Добавить аккаунт</button>
         <div id="new-session-form" style="display:none">
           <div class="form-group">
             <label for="new-session-name">Имя сессии (латиница, цифры, дефис):</label>
             <input type="text" id="new-session-name" placeholder="напр. work, personal" maxlength="32">
+          </div>
+          <div class="proxy-section">
+            <label class="proxy-toggle">
+              <input type="checkbox" id="proxy-enabled" onchange="toggleProxy()">
+              <span>Использовать прокси</span>
+            </label>
+            <div id="proxy-fields" style="display:none">
+              <div class="form-group">
+                <label for="proxy-type">Тип прокси:</label>
+                <select id="proxy-type" onchange="onProxyTypeChange()">
+                  <option value="5">SOCKS5</option>
+                  <option value="4">SOCKS4</option>
+                  <option value="mtproto">MTProxy</option>
+                </select>
+              </div>
+              <div class="proxy-row">
+                <div class="form-group proxy-host-group">
+                  <label for="proxy-host">Хост:</label>
+                  <input type="text" id="proxy-host" placeholder="127.0.0.1">
+                </div>
+                <div class="form-group proxy-port-group">
+                  <label for="proxy-port">Порт:</label>
+                  <input type="number" id="proxy-port" placeholder="1080" min="1" max="65535">
+                </div>
+              </div>
+              <div class="proxy-row">
+                <div class="form-group proxy-user-group">
+                  <label for="proxy-username">Логин:</label>
+                  <input type="text" id="proxy-username" placeholder="необязательно">
+                </div>
+                <div class="form-group proxy-pass-group">
+                  <label for="proxy-password">Пароль:</label>
+                  <input type="text" id="proxy-password" placeholder="необязательно">
+                </div>
+              </div>
+              <div class="form-group" id="proxy-secret-group" style="display:none">
+                <label for="proxy-secret">Secret (MTProxy):</label>
+                <input type="text" id="proxy-secret" placeholder="hex secret">
+              </div>
+              <button type="button" class="proxy-test-btn" onclick="testProxy()">Проверить прокси</button>
+              <span id="proxy-test-status"></span>
+            </div>
           </div>
           <p id="auth-status">Подключите аккаунт Telegram.</p>
           <div id="auth-form">
@@ -65,6 +110,62 @@
               <button id="auth-submit-btn" onclick="submitAuth()">Подтвердить</button>
             </div>
             <button id="auth-cancel-btn" class="auth-cancel-btn" onclick="cancelNewSession()">Отмена</button>
+          </div>
+        </div>
+        <div id="edit-session-form" style="display:none">
+          <h4>Редактировать сессию</h4>
+          <p id="edit-session-name-label"></p>
+          <div class="form-group">
+            <label for="edit-session-display-name">Отображаемое имя:</label>
+            <input type="text" id="edit-session-display-name" placeholder="Напр. Work Account">
+          </div>
+          <div class="form-group">
+            <label for="edit-session-phone">Телефон:</label>
+            <input type="text" id="edit-session-phone" placeholder="+1234567890">
+          </div>
+          <div class="proxy-section">
+            <label class="proxy-toggle">
+              <input type="checkbox" id="edit-proxy-enabled" onchange="toggleEditProxy()">
+              <span>Использовать прокси</span>
+            </label>
+            <div id="edit-proxy-fields" style="display:none">
+              <div class="form-group">
+                <label for="edit-proxy-type">Тип прокси:</label>
+                <select id="edit-proxy-type" onchange="onEditProxyTypeChange()">
+                  <option value="5">SOCKS5</option>
+                  <option value="4">SOCKS4</option>
+                  <option value="mtproto">MTProxy</option>
+                </select>
+              </div>
+              <div class="proxy-row">
+                <div class="form-group proxy-host-group">
+                  <label for="edit-proxy-host">Хост:</label>
+                  <input type="text" id="edit-proxy-host" placeholder="127.0.0.1">
+                </div>
+                <div class="form-group proxy-port-group">
+                  <label for="edit-proxy-port">Порт:</label>
+                  <input type="number" id="edit-proxy-port" placeholder="1080" min="1" max="65535">
+                </div>
+              </div>
+              <div class="proxy-row">
+                <div class="form-group proxy-user-group">
+                  <label for="edit-proxy-username">Логин:</label>
+                  <input type="text" id="edit-proxy-username" placeholder="необязательно">
+                </div>
+                <div class="form-group proxy-pass-group">
+                  <label for="edit-proxy-password">Пароль:</label>
+                  <input type="text" id="edit-proxy-password" placeholder="необязательно">
+                </div>
+              </div>
+              <div class="form-group" id="edit-proxy-secret-group" style="display:none">
+                <label for="edit-proxy-secret">Secret (MTProxy):</label>
+                <input type="text" id="edit-proxy-secret" placeholder="hex secret">
+              </div>
+            </div>
+          </div>
+          <div class="edit-session-actions">
+            <button id="edit-session-save-btn" type="button" onclick="saveSessionEdit()">Сохранить</button>
+            <button id="edit-session-cancel-btn" type="button" onclick="cancelSessionEdit()">Отмена</button>
           </div>
         </div>
       </div>
@@ -78,7 +179,7 @@
       </div>
       <form id="parse-form" onsubmit="return runParse(event)">
         <div class="form-group" id="parse-session-group" style="display:none">
-          <label for="parse-session">Сессия Telegram:</label>
+          <label for="parse-session">Сессия для этой вкладки:</label>
           <select id="parse-session"></select>
         </div>
         <div class="form-group">
@@ -165,7 +266,7 @@
       </div>
       <form id="send-form" onsubmit="return runSend(event)">
         <div class="form-group" id="send-session-group" style="display:none">
-          <label for="send-session">Сессия Telegram:</label>
+          <label for="send-session">Сессия для этой вкладки:</label>
           <select id="send-session"></select>
         </div>
         <div id="send-preview" class="results-panel" style="display:none">

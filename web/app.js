@@ -6,6 +6,78 @@ let lastGeneratedFile = null;
 let generatedTextDirty = false;
 let chatType = null; // "messages" (chat) or "comments" (channel with posts)
 let _sessions = { active: "", sessions: [] };
+let _editingSessionName = null;
+let _envStatus = null;
+const BASE_TITLE = document.title;
+const REQUIRED_ENV_LABELS = {
+  TG_API_ID: "API ID Telegram",
+  TG_API_HASH: "API Hash Telegram",
+  OPENAI_API_KEY: "Ключ API OpenAI",
+};
+
+// Per-tab session storage
+const TAB_SESSION_KEY = "castelet_tab_session";
+const TAB_ID_KEY = "castelet_tab_id";
+
+function getTabId() {
+  let tabId = sessionStorage.getItem(TAB_ID_KEY);
+  if (!tabId) {
+    tabId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 14)}`;
+    sessionStorage.setItem(TAB_ID_KEY, tabId);
+  }
+  return tabId;
+}
+
+const _nativeFetch = window.fetch.bind(window);
+window.fetch = (input, init = {}) => {
+  const headers = new Headers(init.headers || {});
+  headers.set("X-Tab-Id", getTabId());
+  return _nativeFetch(input, { ...init, headers });
+};
+
+function getTabSession() {
+  const saved = sessionStorage.getItem(TAB_SESSION_KEY);
+  return saved || null;
+}
+
+function setTabSession(sessionName) {
+  if (sessionName) {
+    sessionStorage.setItem(TAB_SESSION_KEY, sessionName);
+  } else {
+    sessionStorage.removeItem(TAB_SESSION_KEY);
+  }
+  fetch("/api/workspace/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: sessionName || null }),
+  }).catch(() => {});
+  updateTabSessionIndicator();
+  renderSessionsList();
+  populateSessionDropdowns();
+}
+
+function updateTabSessionIndicator() {
+  const indicator = document.getElementById("tab-session-indicator");
+  if (!indicator) return;
+  
+  const tabSession = getTabSession();
+  if (!tabSession || !_sessions.sessions.length) {
+    indicator.innerHTML = "";
+    document.title = BASE_TITLE;
+    return;
+  }
+  
+  const session = _sessions.sessions.find(s => s.name === tabSession);
+  if (session) {
+    const proxyLabel = session.proxy?.ip
+      ? `<span class="tab-session-proxy">${escapeHtml(session.proxy.ip)}${session.proxy.port ? `:${escapeHtml(String(session.proxy.port))}` : ""}</span>`
+      : "";
+    indicator.innerHTML = `<span class="tab-session-name"><span class="tab-session-user">${escapeHtml(session.displayName || session.name)}</span>${proxyLabel}</span>`;
+    document.title = `${session.displayName || session.name} | ${BASE_TITLE}`;
+  } else {
+    document.title = BASE_TITLE;
+  }
+}
 
 // --- Step Navigation ---
 const stepBtns = document.querySelectorAll(".step-btn");
@@ -37,30 +109,81 @@ document.querySelectorAll('input[name="parseMode"]').forEach((radio) => {
 });
 
 // --- Env Check ---
+function getMissingEnvKeys(keys = Object.keys(REQUIRED_ENV_LABELS)) {
+  if (!_envStatus) return [];
+  return keys.filter((key) => !_envStatus[key]);
+}
+
+function getMissingEnvLabelText(keys) {
+  return keys.map((key) => REQUIRED_ENV_LABELS[key] || key).join(", ");
+}
+
+function renderEnvWarning(messageHtml = "") {
+  const warning = document.getElementById("env-warning");
+  if (!warning) return;
+
+  if (!messageHtml) {
+    warning.style.display = "none";
+    warning.innerHTML = "";
+    return;
+  }
+
+  warning.innerHTML = messageHtml;
+  warning.style.display = "";
+}
+
+function ensureEnvKeys(keys, options = {}) {
+  if (!_envStatus) return true;
+  const missing = getMissingEnvKeys(keys);
+  if (!missing.length) return true;
+
+  const message = `Отсутствуют настройки: ${getMissingEnvLabelText(missing)}. Добавьте их в .env и перезапустите сервер.`;
+
+  if (options.statusElId) {
+    const statusEl = document.getElementById(options.statusElId);
+    if (statusEl) statusEl.textContent = message;
+  }
+
+  if (options.logPanelId) {
+    const panel = document.getElementById(options.logPanelId);
+    if (panel) {
+      panel.innerHTML = "";
+      addStatusLine(panel, message, "error");
+    }
+  }
+
+  return false;
+}
+
 async function checkEnv() {
   try {
     const res = await fetch("/api/env");
     const env = await res.json();
-    const el = document.getElementById("env-checklist");
-
-    const friendly = {
-      TG_API_ID: "API ID Telegram",
-      TG_API_HASH: "API Hash Telegram",
-      TG_SESSION: "Сессия Telegram",
-      OPENAI_API_KEY: "Ключ API OpenAI",
+    _envStatus = {
+      TG_API_ID: !!env.TG_API_ID,
+      TG_API_HASH: !!env.TG_API_HASH,
+      OPENAI_API_KEY: !!env.OPENAI_API_KEY,
     };
 
-    el.innerHTML = Object.entries(friendly)
-      .map(
-        ([key, label]) =>
-          `<div class="env-item"><span class="dot ${env[key] ? "ok" : "missing"}"></span>${label}</div>`
-      )
-      .join("");
+    const missing = getMissingEnvKeys();
+    if (!missing.length) {
+      renderEnvWarning("");
+    } else {
+      const labels = getMissingEnvLabelText(missing);
+      renderEnvWarning(
+        `<div class="env-warning-title">Отсутствуют обязательные ключи</div>
+         <div class="env-warning-text">${escapeHtml(labels)}</div>
+         <div class="env-warning-hint">Добавьте ключи в <code>.env</code> и перезапустите сервер.</div>`
+      );
+    }
 
     await loadSessions();
   } catch (err) {
-    document.getElementById("env-checklist").innerHTML =
-      '<p class="status-error">Не удалось проверить настройки. Сервер запущен?</p>';
+    _envStatus = null;
+    renderEnvWarning(
+      `<div class="env-warning-title">Не удалось проверить ключи окружения</div>
+       <div class="env-warning-hint">Проверьте, что сервер запущен и файл <code>.env</code> доступен.</div>`
+    );
   }
 }
 
@@ -69,6 +192,20 @@ async function loadSessions() {
   try {
     const res = await fetch("/api/sessions");
     _sessions = await res.json();
+    
+    // Initialize tab session if not set
+    let tabSession = getTabSession();
+    if (!tabSession && _sessions.sessions.length > 0) {
+      // Default to the global active session or first session
+      tabSession = _sessions.active || _sessions.sessions[0].name;
+      setTabSession(tabSession);
+    } else if (tabSession && !_sessions.sessions.find(s => s.name === tabSession)) {
+      // Tab session no longer exists, switch to first available
+      tabSession = _sessions.sessions.length > 0 ? _sessions.sessions[0].name : null;
+      setTabSession(tabSession);
+    }
+    
+    updateTabSessionIndicator();
     renderSessionsList();
     populateSessionDropdowns();
   } catch {
@@ -78,23 +215,36 @@ async function loadSessions() {
 
 function renderSessionsList() {
   const container = document.getElementById("sessions-list");
+  const summary = document.getElementById("sessions-summary");
+  const tabSession = getTabSession();
+  if (summary) {
+    const sessionsCount = _sessions.sessions.length;
+    const activeSession = _sessions.sessions.find((s) => s.name === tabSession);
+    const activeLabel = activeSession ? ` • ${activeSession.displayName || activeSession.name}` : "";
+    summary.textContent = `${sessionsCount} аккаунт${sessionsCount === 1 ? "" : sessionsCount < 5 ? "а" : "ов"}${activeLabel}`;
+  }
+
   if (!_sessions.sessions.length) {
     container.innerHTML = '<p class="sessions-empty">Нет добавленных аккаунтов.</p>';
     return;
   }
-
+  
   container.innerHTML = _sessions.sessions
     .map((s) => {
-      const isActive = s.name === _sessions.active;
-      return `<div class="session-item ${isActive ? "session-active" : ""}">
+      const isTabActive = s.name === tabSession;
+      const encodedName = encodeURIComponent(s.name);
+      return `<div class="session-item ${isTabActive ? "session-active" : ""}">
         <div class="session-info">
           <span class="session-name">${escapeHtml(s.displayName || s.name)}</span>
-          ${isActive ? '<span class="session-badge">активная</span>' : ""}
+          ${isTabActive ? '<span class="session-badge">активная в этой вкладке</span>' : ""}
+          ${s.proxy ? '<span class="session-proxy-badge">proxy</span>' : ""}
+          ${s.proxy?.ip ? `<span class="session-proxy-ip">${escapeHtml(s.proxy.ip)}${s.proxy.port ? `:${escapeHtml(String(s.proxy.port))}` : ""}</span>` : ""}
           ${s.phone ? `<span class="session-phone">${escapeHtml(s.phone)}</span>` : ""}
         </div>
         <div class="session-actions">
-          ${!isActive ? `<button class="session-activate-btn" onclick="activateSession('${escapeHtml(s.name)}')">Выбрать</button>` : ""}
-          <button class="session-delete-btn" onclick="removeSession('${escapeHtml(s.name)}')">Удалить</button>
+          ${!isTabActive ? `<button class="session-activate-btn" onclick="activateSessionInTab('${encodedName}')">Использовать в этой вкладке</button>` : ""}
+          <button class="session-activate-btn" onclick="openSessionEdit('${encodedName}')">Редактировать</button>
+          <button class="session-delete-btn" onclick="removeSession('${encodedName}')">Удалить</button>
         </div>
       </div>`;
     })
@@ -111,36 +261,38 @@ function populateSessionDropdowns() {
     document.getElementById("send-session-group"),
   ];
 
-  const show = _sessions.sessions.length > 1;
+  const show = _sessions.sessions.length > 0;
+  const tabSession = getTabSession();
 
   for (let i = 0; i < selects.length; i++) {
     groups[i].style.display = show ? "" : "none";
     selects[i].innerHTML = _sessions.sessions
       .map(
         (s) =>
-          `<option value="${escapeHtml(s.name)}" ${s.name === _sessions.active ? "selected" : ""}>${escapeHtml(s.displayName || s.name)}</option>`
+          `<option value="${escapeHtml(s.name)}" ${s.name === tabSession ? "selected" : ""}>${escapeHtml(s.displayName || s.name)}</option>`
       )
       .join("");
+    
+    // Listen for dropdown changes to update tab session
+    selects[i].onchange = (e) => {
+      setTabSession(e.target.value);
+    };
   }
 }
 
-async function activateSession(name) {
-  try {
-    await fetch("/api/sessions/active", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    await loadSessions();
-  } catch {
-    // ignore
-  }
+function activateSessionInTab(encodedName) {
+  setTabSession(decodeURIComponent(encodedName));
 }
 
-async function removeSession(name) {
+async function removeSession(encodedName) {
+  const name = decodeURIComponent(encodedName);
   if (!confirm(`Удалить сессию «${name}»?`)) return;
   try {
     await fetch(`/api/sessions/${encodeURIComponent(name)}`, { method: "DELETE" });
+    // If deleted session was the active tab session, clear it
+    if (getTabSession() === name) {
+      setTabSession(null);
+    }
     await loadSessions();
     checkEnv();
   } catch {
@@ -148,7 +300,119 @@ async function removeSession(name) {
   }
 }
 
+function toggleEditProxy() {
+  const checked = document.getElementById("edit-proxy-enabled").checked;
+  document.getElementById("edit-proxy-fields").style.display = checked ? "" : "none";
+}
+
+function onEditProxyTypeChange() {
+  const val = document.getElementById("edit-proxy-type").value;
+  document.getElementById("edit-proxy-secret-group").style.display = val === "mtproto" ? "" : "none";
+}
+
+function getEditProxyConfig() {
+  if (!document.getElementById("edit-proxy-enabled").checked) return undefined;
+  const type = document.getElementById("edit-proxy-type").value;
+  const ip = document.getElementById("edit-proxy-host").value.trim();
+  const port = parseInt(document.getElementById("edit-proxy-port").value, 10);
+  if (!ip || !port) return undefined;
+
+  const username = document.getElementById("edit-proxy-username").value.trim() || undefined;
+  const password = document.getElementById("edit-proxy-password").value.trim() || undefined;
+
+  if (type === "mtproto") {
+    const secret = document.getElementById("edit-proxy-secret").value.trim();
+    if (!secret) return undefined;
+    return { ip, port, username, password, secret, MTProxy: true };
+  }
+  return { ip, port, username, password, socksType: parseInt(type, 10) };
+}
+
+function openSessionEdit(encodedName) {
+  const name = decodeURIComponent(encodedName);
+  const session = _sessions.sessions.find((s) => s.name === name);
+  if (!session) return;
+
+  _editingSessionName = name;
+  document.getElementById("new-session-form").style.display = "none";
+  document.getElementById("add-session-btn").style.display = "none";
+  document.getElementById("edit-session-form").style.display = "";
+  document.getElementById("edit-session-name-label").textContent = `Сессия: ${name}`;
+  document.getElementById("edit-session-display-name").value = session.displayName || "";
+  document.getElementById("edit-session-phone").value = session.phone || "";
+
+  const hasProxy = !!session.proxy;
+  document.getElementById("edit-proxy-enabled").checked = hasProxy;
+  document.getElementById("edit-proxy-fields").style.display = hasProxy ? "" : "none";
+
+  if (!hasProxy) {
+    document.getElementById("edit-proxy-type").value = "5";
+    document.getElementById("edit-proxy-host").value = "";
+    document.getElementById("edit-proxy-port").value = "";
+    document.getElementById("edit-proxy-username").value = "";
+    document.getElementById("edit-proxy-password").value = "";
+    document.getElementById("edit-proxy-secret").value = "";
+    document.getElementById("edit-proxy-secret-group").style.display = "none";
+    return;
+  }
+
+  if (session.proxy.MTProxy) {
+    document.getElementById("edit-proxy-type").value = "mtproto";
+    document.getElementById("edit-proxy-secret-group").style.display = "";
+    document.getElementById("edit-proxy-secret").value = session.proxy.secret || "";
+  } else {
+    document.getElementById("edit-proxy-type").value = String(session.proxy.socksType || 5);
+    document.getElementById("edit-proxy-secret-group").style.display = "none";
+    document.getElementById("edit-proxy-secret").value = "";
+  }
+  document.getElementById("edit-proxy-host").value = session.proxy.ip || "";
+  document.getElementById("edit-proxy-port").value = String(session.proxy.port || "");
+  document.getElementById("edit-proxy-username").value = session.proxy.username || "";
+  document.getElementById("edit-proxy-password").value = session.proxy.password || "";
+}
+
+function cancelSessionEdit() {
+  _editingSessionName = null;
+  document.getElementById("edit-session-form").style.display = "none";
+  document.getElementById("add-session-btn").style.display = "";
+}
+
+async function saveSessionEdit() {
+  if (!_editingSessionName) return;
+  const saveBtn = document.getElementById("edit-session-save-btn");
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Сохранение...";
+
+  const displayName = document.getElementById("edit-session-display-name").value.trim();
+  const phone = document.getElementById("edit-session-phone").value.trim();
+  const proxy = getEditProxyConfig();
+  const clearProxy = !document.getElementById("edit-proxy-enabled").checked;
+  const body = { displayName, phone, clearProxy };
+  if (proxy) body.proxy = proxy;
+
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(_editingSessionName)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      alert(data.error || "Не удалось сохранить изменения");
+      return;
+    }
+    await loadSessions();
+    cancelSessionEdit();
+  } catch {
+    alert("Не удалось сохранить изменения");
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = "Сохранить";
+  }
+}
+
 function startNewSession() {
+  document.getElementById("edit-session-form").style.display = "none";
   document.getElementById("new-session-form").style.display = "";
   document.getElementById("add-session-btn").style.display = "none";
   document.getElementById("new-session-name").value = "";
@@ -156,6 +420,8 @@ function startNewSession() {
 }
 
 function cancelNewSession() {
+  _editingSessionName = null;
+  document.getElementById("edit-session-form").style.display = "none";
   document.getElementById("new-session-form").style.display = "none";
   document.getElementById("add-session-btn").style.display = "";
   document.getElementById("auth-input-group").style.display = "none";
@@ -163,11 +429,98 @@ function cancelNewSession() {
   document.getElementById("auth-start-btn").disabled = false;
   document.getElementById("auth-start-btn").textContent = "Войти в Telegram";
   document.getElementById("auth-status").textContent = "Подключите аккаунт Telegram.";
+  resetProxyForm();
   fetch("/api/auth/cancel", { method: "POST" }).catch(() => {});
+}
+
+// --- Proxy ---
+function toggleProxy() {
+  const checked = document.getElementById("proxy-enabled").checked;
+  document.getElementById("proxy-fields").style.display = checked ? "" : "none";
+  if (!checked) {
+    document.getElementById("proxy-test-status").textContent = "";
+    document.getElementById("proxy-test-status").className = "";
+  }
+}
+
+function onProxyTypeChange() {
+  const val = document.getElementById("proxy-type").value;
+  document.getElementById("proxy-secret-group").style.display = val === "mtproto" ? "" : "none";
+}
+
+function getProxyConfig() {
+  if (!document.getElementById("proxy-enabled").checked) return undefined;
+  const type = document.getElementById("proxy-type").value;
+  const ip = document.getElementById("proxy-host").value.trim();
+  const port = parseInt(document.getElementById("proxy-port").value, 10);
+  if (!ip || !port) return undefined;
+
+  const username = document.getElementById("proxy-username").value.trim() || undefined;
+  const password = document.getElementById("proxy-password").value.trim() || undefined;
+
+  if (type === "mtproto") {
+    const secret = document.getElementById("proxy-secret").value.trim();
+    if (!secret) return undefined;
+    return { ip, port, username, password, secret, MTProxy: true };
+  }
+  return { ip, port, username, password, socksType: parseInt(type, 10) };
+}
+
+async function testProxy() {
+  const proxy = getProxyConfig();
+  const status = document.getElementById("proxy-test-status");
+  if (!proxy) {
+    status.textContent = "Заполните хост и порт";
+    status.className = "proxy-fail";
+    return;
+  }
+
+  const btn = document.querySelector(".proxy-test-btn");
+  btn.disabled = true;
+  status.textContent = "Проверка...";
+  status.className = "";
+
+  try {
+    const res = await fetch("/api/proxy/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ proxy }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      status.textContent = "Прокси доступен";
+      status.className = "proxy-ok";
+    } else {
+      status.textContent = data.error || "Прокси недоступен";
+      status.className = "proxy-fail";
+    }
+  } catch {
+    status.textContent = "Ошибка соединения с сервером";
+    status.className = "proxy-fail";
+  }
+  btn.disabled = false;
+}
+
+function resetProxyForm() {
+  document.getElementById("proxy-enabled").checked = false;
+  document.getElementById("proxy-fields").style.display = "none";
+  document.getElementById("proxy-type").value = "5";
+  document.getElementById("proxy-host").value = "";
+  document.getElementById("proxy-port").value = "";
+  document.getElementById("proxy-username").value = "";
+  document.getElementById("proxy-password").value = "";
+  document.getElementById("proxy-secret").value = "";
+  document.getElementById("proxy-secret-group").style.display = "none";
+  document.getElementById("proxy-test-status").textContent = "";
+  document.getElementById("proxy-test-status").className = "";
 }
 
 // --- Auth ---
 async function startAuthWithName() {
+  if (!ensureEnvKeys(["TG_API_ID", "TG_API_HASH"], { statusElId: "auth-status" })) {
+    return;
+  }
+
   const nameInput = document.getElementById("new-session-name");
   const sessionName = nameInput.value.trim().toLowerCase() || "default";
   const btn = document.getElementById("auth-start-btn");
@@ -176,10 +529,13 @@ async function startAuthWithName() {
 
   try {
     await fetch("/api/auth/cancel", { method: "POST" });
+    const proxy = getProxyConfig();
+    const authBody = { sessionName };
+    if (proxy) authBody.proxy = proxy;
     const res = await fetch("/api/auth/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionName }),
+      body: JSON.stringify(authBody),
     });
     const data = await res.json();
     if (data.error) {
@@ -210,6 +566,12 @@ function showAuthStep(step) {
     // Refresh sessions and hide the form
     loadSessions().then(() => {
       checkEnv();
+      // Switch to the newly created session in this tab
+      const sessions = _sessions.sessions;
+      if (sessions.length > 0) {
+        const newestSession = sessions[sessions.length - 1];
+        setTabSession(newestSession.name);
+      }
       setTimeout(() => {
         cancelNewSession();
       }, 1500);
@@ -391,7 +753,7 @@ function streamJob(jobId, logPanelId, onOutputFile, onDone, onRawStdout) {
   // Show initial spinner
   addStatusLine(panel, "Запуск...", "status");
 
-  const source = new EventSource(`/api/stream/${jobId}`);
+  const source = new EventSource(`/api/stream/${jobId}?tabId=${encodeURIComponent(getTabId())}`);
 
   source.addEventListener("stdout", (e) => {
     const line = JSON.parse(e.data);
@@ -527,6 +889,10 @@ async function showParseResults() {
 // --- Parse ---
 async function runParse(e) {
   e.preventDefault();
+  if (!ensureEnvKeys(["TG_API_ID", "TG_API_HASH"], { logPanelId: "parse-log" })) {
+    return false;
+  }
+
   const mode = document.querySelector('input[name="parseMode"]:checked').value;
   chatType = mode; // save chat type for later steps
   const chatId = document.getElementById("chatId").value.trim();
@@ -539,8 +905,14 @@ async function runParse(e) {
     body.posts = Number(document.getElementById("parsePosts").value);
     body.commentsPerPost = Number(document.getElementById("parseComments").value);
   }
-  const parseSession = document.getElementById("parse-session").value;
-  if (parseSession) body.session = parseSession;
+  // Always use the tab's active session
+  const tabSession = getTabSession();
+  if (tabSession) {
+    body.session = tabSession;
+  } else {
+    const parseSession = document.getElementById("parse-session").value;
+    if (parseSession) body.session = parseSession;
+  }
 
   const btn = document.getElementById("parse-btn");
   btn.disabled = true;
@@ -627,6 +999,10 @@ document.getElementById("promptReset").addEventListener("click", () => {
 
 async function runGenerate(e) {
   e.preventDefault();
+  if (!ensureEnvKeys(["OPENAI_API_KEY"], { logPanelId: "generate-log" })) {
+    return false;
+  }
+
   // Auto-select: use last parsed file or the most recent data file
   const inputFile = lastOutputFile || (_dataFiles.length > 0 ? _dataFiles[0].name : null);
   const promptFile = _promptFiles.length > 0 ? _promptFiles[0].name : null;
@@ -908,6 +1284,10 @@ async function saveSendEdits() {
 
 async function runSend(e) {
   e.preventDefault();
+  if (!ensureEnvKeys(["TG_API_ID", "TG_API_HASH"], { logPanelId: "send-log" })) {
+    return false;
+  }
+
   const inputFile = _sendFile;
   if (!inputFile) return false;
 
@@ -915,14 +1295,20 @@ async function runSend(e) {
 
   const mode = "comment";
   const delay = 2000;
-  const sendSession = document.getElementById("send-session").value;
 
   const btn = document.getElementById("send-btn");
   btn.disabled = true;
   btn.textContent = "Отправка...";
 
   const sendBody = { inputFile, mode, delay };
-  if (sendSession) sendBody.session = sendSession;
+  // Always use the tab's active session
+  const tabSession = getTabSession();
+  if (tabSession) {
+    sendBody.session = tabSession;
+  } else {
+    const sendSession = document.getElementById("send-session").value;
+    if (sendSession) sendBody.session = sendSession;
+  }
 
   try {
     const res = await fetch("/api/run/send", {
@@ -963,6 +1349,32 @@ function continueToSend() {
   goToStep(4);
 }
 
+// --- Active Jobs Polling ---
+const scriptLabels = { parser: "Сбор", generator: "Генерация", sender: "Отправка" };
+
+async function pollActiveJobs() {
+  try {
+    const res = await fetch("/api/jobs/active");
+    const jobs = await res.json();
+    const badge = document.getElementById("active-jobs-badge");
+    if (!jobs.length) {
+      badge.innerHTML = "";
+      return;
+    }
+    badge.innerHTML = jobs
+      .map((j) => {
+        const label = scriptLabels[j.script] || j.script;
+        const sess = j.session ? ` (${escapeHtml(j.session)})` : "";
+        return `<span class="job-chip">${escapeHtml(label)}${sess}</span>`;
+      })
+      .join("");
+  } catch {
+    // ignore
+  }
+}
+
+setInterval(pollActiveJobs, 3000);
+
 // --- Init ---
 window.startAuthWithName = startAuthWithName;
 window.submitAuth = submitAuth;
@@ -976,7 +1388,15 @@ window.saveGeneratedText = saveGeneratedText;
 window.saveSendEdits = saveSendEdits;
 window.startNewSession = startNewSession;
 window.cancelNewSession = cancelNewSession;
-window.activateSession = activateSession;
+window.activateSessionInTab = activateSessionInTab;
+window.openSessionEdit = openSessionEdit;
+window.cancelSessionEdit = cancelSessionEdit;
+window.saveSessionEdit = saveSessionEdit;
 window.removeSession = removeSession;
+window.toggleProxy = toggleProxy;
+window.onProxyTypeChange = onProxyTypeChange;
+window.testProxy = testProxy;
+window.toggleEditProxy = toggleEditProxy;
+window.onEditProxyTypeChange = onEditProxyTypeChange;
 
 checkEnv();
