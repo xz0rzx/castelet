@@ -106,6 +106,29 @@ function extractForward(msg: Api.Message): ForwardInfo | undefined {
   return info;
 }
 
+function toGroupedIdKey(groupedId: { toString(): string } | null | undefined): string | null {
+  if (groupedId == null) return null;
+  return groupedId.toString();
+}
+
+function getLogicalPostKey(msg: Api.Message): string {
+  const groupedIdKey = toGroupedIdKey(msg.groupedId);
+  return groupedIdKey ? `group:${groupedIdKey}` : `single:${msg.id}`;
+}
+
+function pickCanonicalPostMessage(messages: Api.Message[]): Api.Message {
+  // For grouped albums, Telegram discussion threads are usually attached to the earliest item.
+  const sortedByIdAsc = [...messages].sort((a, b) => a.id - b.id);
+  return sortedByIdAsc[0];
+}
+
+function pickCaptionSourceMessage(messages: Api.Message[]): Api.Message | null {
+  const withText = messages.filter((m) => !!m.message);
+  if (withText.length === 0) return null;
+  const sortedByIdAsc = withText.sort((a, b) => a.id - b.id);
+  return sortedByIdAsc[0];
+}
+
 function parseArgs() {
   if (hasFlag("--help") || !getPositionalArg(0)) {
     console.log(`Usage:
@@ -232,15 +255,26 @@ async function fetchComments(
     console.log(`Fetching comments from "${title}" (${postsCount} posts, up to ${commentsPerPost} comments each)...`);
 
     const posts: ParsedPost[] = [];
-    const postMessages: Api.Message[] = [];
+    const groupedMessages = new Map<string, Api.Message[]>();
+    const postKeysInOrder: string[] = [];
 
-    for await (const msg of client.iterMessages(entity, { limit: postsCount })) {
-      if (msg instanceof Api.Message) {
-        postMessages.push(msg);
+    for await (const msg of client.iterMessages(entity)) {
+      if (!(msg instanceof Api.Message)) continue;
+      const key = getLogicalPostKey(msg);
+      if (!groupedMessages.has(key)) {
+        groupedMessages.set(key, [msg]);
+        postKeysInOrder.push(key);
+      } else {
+        groupedMessages.get(key)!.push(msg);
       }
+      if (postKeysInOrder.length >= postsCount) break;
     }
 
-    for (const post of postMessages) {
+    for (const key of postKeysInOrder) {
+      const messageGroup = groupedMessages.get(key) || [];
+      if (messageGroup.length === 0) continue;
+      const post = pickCanonicalPostMessage(messageGroup);
+      const captionSource = pickCaptionSourceMessage(messageGroup);
       const comments: ParsedMessage[] = [];
       try {
         await withRetry(
@@ -269,8 +303,8 @@ async function fetchComments(
 
       posts.push({
         postId: post.id,
-        postText: post.message || "",
-        postEntities: extractEntities(post),
+        postText: captionSource?.message || "",
+        postEntities: captionSource ? extractEntities(captionSource) : extractEntities(post),
         ...(() => {
           const media = extractMedia(post);
           return media ? { postMedia: media } : {};
